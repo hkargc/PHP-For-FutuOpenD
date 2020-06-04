@@ -31,10 +31,10 @@ class futu{
 	 */
 	private $serverVer = 0;
 	/**
-	 * 初始化的返回
+	 * 初始化的返回,心跳间隔
 	 * @var integer
 	 */
-	private $keepAliveInterval = 0;
+	private $keepAliveInterval = 5;
 	/**
 	 * 同一个连接只解锁一次
 	 * @var string
@@ -92,7 +92,7 @@ class futu{
 		$this->port = $port;
 		$this->pass = $pass;
 		
-		if(! class_exists('Swoole\Client')){
+		if(! class_exists('Swoole\Client')){ //强制使用
 			die('http://pecl.php.net/package/swoole');
 		}
 	}
@@ -127,7 +127,7 @@ class futu{
 		if(! $this->cli){
 			$this->errorlog('Client Error.', 0);
 		}
-		if($this->timer && (time() - $this->timer >= 20)){ //每N秒发一次心跳(只有同步模式会初始化时间)
+		if($this->timer && (time() - $this->timer >= $this->keepAliveInterval)){ //每N秒发一次心跳(只有同步模式会初始化时间)
 			$this->timer = time(); //锁住
 			$this->KeepAlive();
 		}
@@ -162,7 +162,7 @@ class futu{
 				"clientVer" => 0,
 				'clientID' => '0',
 		        'pushProtoFmt' => 1, //0:pb,1:json
-		        'packetEncAlgo' => -1,
+                'packetEncAlgo' => $this->encrypt ? 0 : -1, //0富途修改过的AES的ECB加密模式;-1不加密;1标准的AES的ECB加密模式;2标准的AES的CBC加密模式
 				'recvNotify' => $this->push ? true : false,
 				);
 		if(! $ret = $this->send('1001', $C2S)){
@@ -510,17 +510,18 @@ class futu{
 	    return (array)$ret;
 	}
 	/**
-	 * 获取单只股票一段历史K线(有限额)
+	 * 获取单只股票一段历史K线(有限额)分K提供最近2年数据,日K及以上提供近10年数据
 	 * @param string $code
 	 * @param int $klType K线类型:1一分K;2日K;3周K;4月K;5年K;6五分K;7十五分K;8三十分K;9六十分K;10三分K;11季K
 	 * @param int $beginTime
 	 * @param int $endTime
 	 * @param int $maxAckKLNum 最多返回多少根K线,如果未指定表示不限制
+	 * @param int $nextReqKey 分页请求key
 	 * @param int $needKLFieldsFlag 指定返回K线结构体特定某几项数据,KLFields枚举值或组合,如果未指定返回全部字段
 	 * @param int $rehabType 复权类型
 	 */
-	public function Qot_RequestHistoryKL($code, $klType, $beginTime, $endTime, $maxAckKLNum=0, $needKLFieldsFlag=[], $rehabType=1){
-	    if(! $this->limit(__LINE__, 30, 10)){
+	public function Qot_RequestHistoryKL($code, $klType, $beginTime, $endTime, $maxAckKLNum=0, $nextReqKey=null, $needKLFieldsFlag=[], $rehabType=1){
+	    if(! $this->limit(__LINE__, 30, 60)){
 	        return array();
 	    }
 	    if(! $this->InitConnect()){
@@ -538,6 +539,9 @@ class futu{
 	    );
 	    if($maxAckKLNum){
 	        $C2S['maxAckKLNum'] = (int)$maxAckKLNum;
+	    }
+	    if($nextReqKey){
+	        $C2S['nextReqKey'] = (string)$nextReqKey;
 	    }
 	    if($needKLFieldsFlag){
 	        $C2S['needKLFieldsFlag'] = (array)$needKLFieldsFlag;
@@ -582,7 +586,7 @@ class futu{
 	 * @return array/false
 	 */
 	public function Qot_RequestRehab($code){
-	    if(! $this->limit(__LINE__, 30, 10)){
+	    if(! $this->limit(__LINE__, 30, 60)){
 	        return false;
 	    }
 	    if(! $this->InitConnect()){
@@ -610,10 +614,7 @@ class futu{
 	    if(! $this->InitConnect()){
 	        return array();
 	    }
-	    $C2S = array(
-	        'market' => $this->market,
-	        'secType' => (int)$secType,
-	    );
+
 	    $securityList = array();
 	    foreach ((array)$codes as $code){
 	        $securityList[] = array(
@@ -621,8 +622,16 @@ class futu{
 	            'code' => (string)$code,
 	        );
 	    }
+	    if(! $securityList){
+	        $C2S = array(
+	            'market' => $this->market,
+	            'secType' => (int)$secType,
+	        );
+	    }
 	    if($securityList){
-	        $C2S['securityList'] = (array)$securityList;
+	        $C2S = array(
+	            'securityList' => (array)$securityList,
+	        );
 	    }
 	    if(! $ret = $this->send('3202', $C2S)){
 	        return array();
@@ -651,12 +660,12 @@ class futu{
 	    return (array)$gets;
 	}
 	/**
-	 * 获取一批股票的快照信息,每次最多200支(30秒10次)
+	 * 获取一批股票的快照信息,每次最多400支
 	 * @param array $codes
 	 * @return array
 	 */
 	public function Qot_GetSecuritySnapshot($codes){
-	    if(! $this->limit(__LINE__, 30, 10)){
+	    if(! $this->limit(__LINE__, 30, 60)){
 	        return array();
 	    }
 	    if(! $this->InitConnect()){
@@ -783,6 +792,9 @@ class futu{
 	 * @return array
 	 */
 	public function Qot_GetReference($code, $referenceType=1){
+	    if(! $this->limit(__LINE__, 30, 10)){
+	        return array();
+	    }
 		if(! $this->InitConnect()){
 			return array();
 		}
@@ -878,6 +890,9 @@ class futu{
 	 * @param string $ascend 升序ture,降序false
 	 */
 	public function Qot_GetWarrant($owner, $filter=array(), $begin=0, $num=200, $sortField=10, $ascend=false){
+	    if(! $this->limit(__LINE__, 30, 60)){
+	        return array();
+	    }
 	    if(! $this->InitConnect()){
 	        return array();
 	    }
@@ -915,12 +930,12 @@ class futu{
 	    return (array)$gets;
 	}
 	/**
-	 * 获取资金流向
+	 * 获取资金流向,仅支持正股、窝轮和基金
 	 * @param string $code
 	 * @return boolean|array|array
 	 */
 	public function Qot_GetCapitalFlow($code){
-	    if(! $this->limit(__LINE__, 30, 10)){
+	    if(! $this->limit(__LINE__, 30, 30)){
 	        return array();
 	    }
 		if(! $this->InitConnect()){
@@ -943,7 +958,7 @@ class futu{
 	 * @return array
 	 */
 	public function Qot_GetCapitalDistribution($code){
-	    if(! $this->limit(__LINE__, 30, 10)){
+	    if(! $this->limit(__LINE__, 30, 30)){
 	        return array();
 	    }
 		if(! $this->InitConnect()){
@@ -1043,7 +1058,7 @@ class futu{
 	 * @param number $num
 	 * @return array
 	 */
-	public function Qot_StockFilter($filter=array(), $plate=0, $begin=0, $num=10){
+	public function Qot_StockFilter($filter=array(), $plate=0, $begin=0, $num=200){
 	    if(! $this->limit(__LINE__, 30, 10)){
 	        return array();
 	    }
@@ -1087,7 +1102,7 @@ class futu{
 	 * @param array $timeFilter 根据时间筛选
 	 * @return array
 	 */
-	public function Qot_GetCodeChange($codes, $typeList, $timeFilter){
+	public function Qot_GetCodeChange($codes=array(), $typeList=array(), $timeFilter=array()){
 	    if(! $this->InitConnect()){
 	        return array();
 	    }
@@ -1108,8 +1123,11 @@ class futu{
 	        $C2S['timeFilter'] = $timeFilter;
 	    }
 	    if($placeHolder = (int)$placeHolder){ //占位
-	        $C2S['placeHolder'] = $placeHolder;
+	        $C2S['placeHolder'] = (int)$placeHolder;
         }
+        
+        $C2S or ($C2S['placeHolder'] = 0); //返回全部
+        
         if(! $C2S){
             return array();
         }
@@ -1154,10 +1172,13 @@ class futu{
 	}
 	/**
 	 * 获取期货合约资料
-	 * @param array $codes
+	 * @param array $codes 传入股票最多 200 个
 	 * @return array|boolean
 	 */
 	public function Qot_GetFutureInfo($codes){
+	    if(! $this->limit(__LINE__, 30, 30)){
+	        return array();
+	    }
 	    if(! $this->InitConnect()){
 	        return array();
 	    }
@@ -1169,13 +1190,13 @@ class futu{
 	        );
 	    }
 	    if(! $securityList){
-	        return false;
+	        return array();
 	    }
 	    $C2S = array(
 	        'securityList' => (array)$securityList
 	    );
 	    if(! $ret = $this->send('3218', $C2S)){
-	        return false;
+	        return array();
 	    }
 	    $gets = array();
 	    foreach ((array)$ret['futureInfoList'] as $v){
@@ -1208,6 +1229,9 @@ class futu{
 	 * @return array tradeDateType: 0全天;1上午;2下午
 	 */
 	public function Qot_RequestTradeDate($beginTime, $endTime){
+	    if(! $this->limit(__LINE__, 30, 30)){
+	        return array();
+	    }
 	    if(! $this->InitConnect()){
 	        return array();
 	    }
@@ -1409,16 +1433,23 @@ class futu{
 		if(! $this->Trd_GetAccList()){
 			return false;
 		}
-		if(! $accID = (string)$this->accList[$this->trdMarket][$this->trdEnv]){
-			return false;
+		
+		$accIDList = array();
+		foreach ([1,5] as $trdMarket){ //接收港股及期货的推送
+		    if($accID = (string)$this->accList[$trdMarket][$this->trdEnv]){
+		        $accIDList[] = $accID;
+		    }
 		}
+		if(! $accIDList){
+		    return false;
+		}
+		
 		$C2S = array(
-				'accIDList' => (array)$accID,
+            'accIDList' => (array)$accIDList
 		);
 		if(! $ret = $this->send('2008', $C2S)){
 			return array();
 		}
-		
 		return $this->accPush = (bool)$ret;
 	}
 	/**
@@ -1436,6 +1467,11 @@ class futu{
 	    }
 	    if(! $accID = (string)$this->accList[$this->trdMarket][$this->trdEnv]){
 	        return array();
+	    }
+	    if($refreshCache){
+	        if(! $this->limit(__LINE__, 30, 10)){
+	            return array();
+	        }
 	    }
 	    $C2S = array(
 	        'header' => array(
@@ -1471,6 +1507,11 @@ class futu{
 	    }
 	    if(! $accID = (string)$this->accList[$this->trdMarket][$this->trdEnv]){
 	        return array();
+	    }
+	    if($refreshCache){
+	        if(! $this->limit(__LINE__, 30, 10)){
+	            return array();
+	        }
 	    }
 	    $C2S = array(
 	        'header' => array(
@@ -1617,6 +1658,9 @@ class futu{
 	    if(! $this->limit(__LINE__, 30, 15)){
 	        return 0;
 	    }
+	    if(! $this->limit(__LINE__, 1, 5)){
+	        return 0;
+	    }
 	    $C2S = array(
 	        'header' => array(
 	            'trdEnv' => $this->trdEnv,
@@ -1670,6 +1714,9 @@ class futu{
 	    if(! $this->limit(__LINE__, 30, 20)){
 	        return 0;
 	    }
+	    if(! $this->limit(__LINE__, 1, 5)){
+	        return 0;
+	    }
 	    $C2S = array(
 	        'header' => array(
 	            'trdEnv' => $this->trdEnv,
@@ -1715,6 +1762,11 @@ class futu{
 	    }
 	    if(! $accID = (string)$this->accList[$this->trdMarket][$this->trdEnv]){
 	        return array();
+	    }
+	    if($refreshCache){
+	        if(! $this->limit(__LINE__, 30, 10)){
+	            return array();
+	        }
 	    }
 	    $C2S = array(
 	        'header' => array(
