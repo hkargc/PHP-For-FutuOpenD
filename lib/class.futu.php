@@ -211,6 +211,24 @@ class futu{
 		return (int)$ret['time'];
 	}
 	/**
+	 * 获取当前用户信息
+	 * @param int $flag 1昵称用户头像牛牛号;2API权限信息;4市场的行情权限;8免责;16升级类型;1024WebKey
+	 * @return array
+	 */
+	public function GetUserInfo($flag=-1){
+	    if(! $this->InitConnect()){
+	        return array();
+	    }
+	    $C2S = array(
+	        'flag' => (int)$flag,
+	    );
+	    if(! $ret = $this->send('1005', $C2S)){
+	        return array();
+	    }
+	    
+	    return (array)$ret;
+	}
+	/**
 	 * 订阅或者反订阅,同时注册或者取消推送(股票个数*K线种类<=100)
 	 * @param array $codes
 	 * @param array $subTypeList 1报价;2摆盘;4逐笔;5分时;6日K;7五分K;8十五分K;9三十K;10六十K;11一分K;12周K;13月K;14经纪队列;15季K;16年K;17三分K;18委托明细
