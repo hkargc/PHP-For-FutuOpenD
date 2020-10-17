@@ -2,7 +2,7 @@
 /**
  * 富途行情及交易接口 
  * @author https://github.com/hkargv
- * https://futunnopen.github.io/futu-api-doc/index.html
+ * https://openapi.futunn.com/futu-api-doc/
  */
 class futu{
 	/**
@@ -35,6 +35,11 @@ class futu{
 	 * @var integer
 	 */
 	private $keepAliveInterval = 5;
+	/**
+	 * AES加密通信CBC加密模式的iv,固定为16字节长字符串
+	 * @var string
+	 */
+	private $aesCBCiv = '';
 	/**
 	 * 同一个连接只解锁一次
 	 * @var string
@@ -161,19 +166,21 @@ class futu{
 		$C2S = array(
 				"clientVer" => 0,
 				'clientID' => '0',
-		        'pushProtoFmt' => 1, //0:pb,1:json
+		        'recvNotify' => $this->push ? true : false,
                 'packetEncAlgo' => $this->encrypt ? 0 : -1, //0富途修改过的AES的ECB加密模式;-1不加密;1标准的AES的ECB加密模式;2标准的AES的CBC加密模式
-				'recvNotify' => $this->push ? true : false,
+		        'pushProtoFmt' => 1, //0:pb,1:json
+		        'programmingLanguage' => ''
 				);
 		if(! $ret = $this->send('1001', $C2S)){
-			return false;
+			return '';
 		}
-	
-		$this->connID = (string)$ret['connID']; //uint64
-		$this->loginUserID = (string)$ret['loginUserID']; //uint64
-		$this->connAESKey = (string)$ret['connAESKey'];
+		
 		$this->serverVer = (int)$ret['serverVer'];
+		$this->loginUserID = (string)$ret['loginUserID']; //uint64
+		$this->connID = (string)$ret['connID']; //uint64
+		$this->connAESKey = (string)$ret['connAESKey'];
 		$this->keepAliveInterval = (int)$ret['keepAliveInterval'];
+		$this->aesCBCiv = (string)$ret['aesCBCiv'];
 
 		return $this->connID;
 	}
@@ -186,7 +193,7 @@ class futu{
 			return array();
 		}
 		$C2S = array(
-				'userID' => (string)$this->loginUserID,
+                'userID' => 0 //历史原因,目前已废弃,填0即可
 				);
 		if(! $ret = $this->send('1002', $C2S)){
 			return array();
@@ -237,9 +244,11 @@ class futu{
 	 * @param array $regPushRehabTypeList 复权类型:0不复权1前复权2后复权
 	 * @param bool $isFirstPush 注册后如果本地已有数据是否首推一次已存在数据
 	 * @param bool $isUnsubAll 一键取消当前连接的所有订阅,当被设置为true时忽略其他参数
+	 * @param bool $isSubOrderBookDetail 是否订阅摆盘明细
+	 * @param bool $extendedTime 是否允许美股盘前盘后数据
 	 * @return bool
 	 */
-	public function Qot_Sub($codes, $subTypeList, $isSubOrUnSub=true, $isRegOrUnRegPush=null, $regPushRehabTypeList=[], $isFirstPush=false, $isUnsubAll=false){
+	public function Qot_Sub($codes, $subTypeList, $isSubOrUnSub=true, $isRegOrUnRegPush=null, $regPushRehabTypeList=[], $isFirstPush=false, $isUnsubAll=false, $isSubOrderBookDetail=false, $extendedTime=false){
 		if(! $this->InitConnect()){
 			return false;
 		}
@@ -270,60 +279,28 @@ class futu{
 		if($isRegOrUnRegPush && $regPushRehabTypeList){
 			$C2S['regPushRehabTypeList'] = (array)$regPushRehabTypeList;
 		}
+		if($isSubOrderBookDetail){
+		    $C2S['isSubOrderBookDetail'] = (bool)$isSubOrderBookDetail;
+		}
+		if($extendedTime){
+		    $C2S['extendedTime'] = (bool)$extendedTime;
+		}
 		if(! $ret = $this->send('3001', $C2S)){
 			return false;
 		}
-		return (bool)$ret;
-	}
-	/**
-	 * 注册行情推送(可用Qot_Sub替代)
-	 * @param array $codes
-	 * @param array $subTypeList 1报价;2摆盘;4逐笔;5分时;6日K;7五分K;8十五分K;9三十K;10六十K;11一分K;12周K;13月K;14经纪队列;15季K;16年K;17三分K
-	 * @param bool $isRegOrUnReg
-	 * @param array $rehabTypeList
-	 * @param bool $isFirstPush
-	 * @return boolean
-	 */
-	public function Qot_RegQotPush($codes, $subTypeList, $isRegOrUnReg, $rehabTypeList=[1], $isFirstPush=false){
-		if(! $this->InitConnect()){
-			return false;
-		}
-		if(! $this->Qot_Sub($codes, $subTypeList, true, $isRegOrUnReg, $rehabTypeList, $isFirstPush)){
-			return false;
-		}
-		$securityList = array();
-		foreach ((array)$codes as $code){
-			$securityList[] = array(
-					'market' => $this->market,
-					'code' => (string)$code,
-			);
-		}
-		if(! $securityList){
-			return false;
-		}
-		$C2S = array(
-				'securityList' => (array)$securityList,
-				'subTypeList' => (array)$subTypeList, //订阅数据类型
-				'isRegOrUnReg' => (bool)$isRegOrUnReg, //true订阅false反订阅
-				'isFirstPush' => (bool)$isFirstPush,
-				'rehabTypeList' => (array)$rehabTypeList,
-		);
-		if(! $ret = $this->send('3002', $C2S)){
-			return false;
-		}
 		
-		return (bool)$ret;
+		return isset($ret['result']) ? (bool)$ret['result'] : true;
 	}
 	/**
 	 * 获取订阅信息
-	 * @param bool $isReqAllConn 是否返回所有连接的订阅状态
+	 * @param bool $isReqAllConn 是否返回所有连接的订阅状态,不传或者传false只返回当前连接数据
 	 */
-	public function Qot_GetSubInfo($isReqAllConn){
+	public function Qot_GetSubInfo($isReqAllConn=false){
 		if(! $this->InitConnect()){
 			return array();
 		}
 		$C2S = array(
-				'isReqAllConn' => (bool)$isReqAllConn,
+            'isReqAllConn' => (bool)$isReqAllConn
 		);
 		if(! $ret = $this->send('3003', $C2S)){
 			return array();
@@ -355,18 +332,7 @@ class futu{
 		if(! $ret = $this->send('3004', $C2S)){
 			return array();
 		}
-		$gets = array();
-		foreach ((array)$ret['basicQotList'] as $v){
-			
-			if(! $v['code'] = $v['security']['code']){
-				continue;
-			}
-			$v['market'] = $v['security']['market'];
-			unset($v['security']);
-
-			$gets[$v['code']] = $v;
-		}
-		return (array)$gets;
+		return (array)$ret['basicQotList'];
 	}
 	/**
 	 * 获取K线
@@ -404,15 +370,8 @@ class futu{
 		if(! $ret = $this->send('3006', $C2S)){
 			return array();
 		}
-		$gets = array();
-		foreach ((array)$ret['klList'] as $v){
-			$v['avgPrice'] = $v['closePrice'];
-			$v['price'] = $v['closePrice']; //方便前端
 
-			$gets[$v['timestamp']] = $v;
-		}
-		ksort($gets, SORT_NUMERIC);
-		return (array)$gets;
+		return (array)$ret['klList'];
 	}
 	/**
 	 * 获取分时
@@ -432,15 +391,7 @@ class futu{
 		if(! $ret = $this->send('3008', $C2S)){
 			return array();
 		}
-
-		$gets = array();
-		foreach ((array)$ret['rtList'] as $v){
-			$v['closePrice'] = $v['price']; //方便前端
-			
-			$gets[$v['timestamp']] = $v;
-		}
-		ksort($gets, SORT_NUMERIC);
-		return (array)$gets;
+		return (array)$ret['rtList'];
 	}
 	/**
 	 * 获取逐笔
@@ -476,7 +427,7 @@ class futu{
 		}
 		$C2S = array(
 				'security' => array(
-						'market' => $this->market,
+                        'market' => $this->market,
 						'code' => (string)$code,
 				),
 				'num' => (int)$num,
@@ -484,8 +435,7 @@ class futu{
 		if(! $ret = $this->send('3012', $C2S)){
 			return array();
 		}
-
-		return array('buy'=>(array)$ret['orderBookBidList'], 'sell'=>(array)$ret['orderBookAskList']);
+        return (array)$ret;
 	}
 	/**
 	 * 获取经纪队列
@@ -505,7 +455,7 @@ class futu{
 		if(! $ret = $this->send('3014', $C2S)){
 			return array();
 		}
-		return array((array)$ret['brokerAskList'], (array)$ret['brokerBidList']);
+		return (array)$ret;
 	}
 	/**
 	 * 获取委托明细
@@ -534,13 +484,17 @@ class futu{
 	 * @param int $beginTime
 	 * @param int $endTime
 	 * @param int $maxAckKLNum 最多返回多少根K线,如果未指定表示不限制
-	 * @param int $nextReqKey 分页请求key
+	 * @param int $nextReqKey 分页请求key(在返回的数组中)
 	 * @param int $needKLFieldsFlag 指定返回K线结构体特定某几项数据,KLFields枚举值或组合,如果未指定返回全部字段
 	 * @param int $rehabType 复权类型
+	 * @param bool $extendedTime 是否获取美股盘前盘后数据,当前仅支持1分K
+	 * @return array
 	 */
-	public function Qot_RequestHistoryKL($code, $klType, $beginTime, $endTime, $maxAckKLNum=0, $nextReqKey=null, $needKLFieldsFlag=[], $rehabType=1){
-	    if(! $this->limit(__LINE__, 30, 60)){
-	        return array();
+	public function Qot_RequestHistoryKL($code, $klType, $beginTime, $endTime, $maxAckKLNum=0, $nextReqKey=null, $needKLFieldsFlag=[], $rehabType=1, $extendedTime=false){
+	    if($nextReqKey == null){
+	        if(! $this->limit(__LINE__, 30, 60)){
+                return array();
+            }
 	    }
 	    if(! $this->InitConnect()){
 	        return array();
@@ -564,23 +518,20 @@ class futu{
 	    if($needKLFieldsFlag){
 	        $C2S['needKLFieldsFlag'] = (array)$needKLFieldsFlag;
 	    }
+	    if($extendedTime){
+	        $C2S['extendedTime'] = (bool)$extendedTime;
+	    }
 	    if(! $ret = $this->send('3103', $C2S)){
 	        return array();
 	    }
-	    $gets = array();
-	    foreach ((array)$ret['klList'] as $v){
-	        $v['avgPrice'] = $v['closePrice'];
-	        $v['price'] = $v['closePrice']; //方便前端
-	        $gets[$v['timestamp']] = $v;
-	    }
-	    ksort($gets, SORT_NUMERIC);
-	    return (array)$gets;
+	    return (array)$ret['klList'];
 	}
 	/**
 	 * 拉取历史K线已经用掉的额度
 	 * @param bool $bGetDetail 是否拉取详细列表
+	 * @return array
 	 */
-	public function Qot_RequestHistoryKLQuota($bGetDetail){
+	public function Qot_RequestHistoryKLQuota($bGetDetail=false){
 	    if(! $this->InitConnect()){
 	        return array();
 	    }
@@ -589,12 +540,6 @@ class futu{
 	    );
 	    if(! $ret = $this->send('3104', $C2S)){
 	        return array();
-	    }
-	    foreach ((array)$ret['detailList'] as $k => $v){
-	        $ret['detailList'][$k]['code'] = $v['security']['code'];
-	        $ret['detailList'][$k]['market'] = $v['security']['market'];
-	        
-	        unset($ret['detailList'][$k]['security']);
 	    }
 	    return (array)$ret;
 	}
@@ -619,7 +564,6 @@ class futu{
 	    if(! $ret = $this->send('3105', $C2S)){
 	        return array();
 	    }
-	    
 	    return (array)$ret['rehabList'];
 	}
 	/**
@@ -654,28 +598,7 @@ class futu{
 	    if(! $ret = $this->send('3202', $C2S)){
 	        return array();
 	    }
-	    
-	    $gets = array();
-	    foreach ((array)$ret['staticInfoList'] as $v){
-	        if($v['basic']){
-	            $v['basic']['code'] = $v['basic']['security']['code'];
-	            $v['basic']['market'] = $v['basic']['security']['market'];
-	            unset($v['basic']['security']);
-	        }
-	        if($v['warrantExData']){
-	            $v['warrantExData']['owner_code'] = $v['warrantExData']['owner']['code'];
-	            $v['warrantExData']['owner_market'] = $v['warrantExData']['owner']['market'];
-	            unset($v['warrantExData']['owner']);
-	        }
-	        
-	        $a = array_merge((array)$v['basic'], (array)$v['warrantExData']);
-	        if(! $a['code']){
-	            continue;
-	        }
-	        
-	        $gets[$a['code']] = $a;
-	    }
-	    return (array)$gets;
+	    return (array)$ret['staticInfoList'];
 	}
 	/**
 	 * 获取一批股票的快照信息,每次最多400支
@@ -708,28 +631,7 @@ class futu{
 	    if(! $ret = $this->send('3203', $C2S)){
 	        return array();
 	    }
-	    $gets = array();
-	    foreach ((array)$ret['snapshotList'] as $v){
-	        if($v['basic']){
-	            $v['basic']['code'] = $v['basic']['security']['code'];
-	            $v['basic']['market'] = $v['basic']['security']['market'];
-	            $v['basic']['secType'] = $v['basic']['type'];
-	            unset($v['basic']['security'], $v['basic']['type']);
-	        }
-	        if($v['warrantExData']){
-	            $v['warrantExData']['owner_code'] = $v['warrantExData']['owner']['code'];
-	            $v['warrantExData']['owner_market'] = $v['warrantExData']['owner']['market'];
-	            $v['warrantExData']['type'] = $v['warrantExData']['warrantType'];
-	            unset($v['warrantExData']['owner'],$v['warrantExData']['warrantType']);
-	        }
-	        $a = array_merge((array)$v['basic'], (array)$v['equityExData'], (array)$v['warrantExData'], (array)$v['plateExData'], (array)$v['indexExData']);
-	        if(! $a['code']){
-	            continue;
-	        }
-	        
-	        $gets[$a['code']] = $a;
-	    }
-	    return (array)$gets;
+	    return (array)$ret['snapshotList'];
 	}
 	/**
 	 * 获取板块集合下的板块(30秒10次)
@@ -781,27 +683,7 @@ class futu{
 		if(! $ret = $this->send('3205', $C2S)){
 			return array();
 		}
-		$gets = array();
-		foreach ((array)$ret['staticInfoList'] as $v){
-			if($v['basic']){
-				$v['basic']['code'] = $v['basic']['security']['code'];
-				$v['basic']['market'] = $v['basic']['security']['market'];
-				unset($v['basic']['security']);
-			}
-			if($v['warrantExData']){
-				$v['warrantExData']['owner_code'] = $v['warrantExData']['owner']['code'];
-				$v['warrantExData']['owner_market'] = $v['warrantExData']['owner']['market'];
-				unset($v['warrantExData']['owner']);
-			}
-			
-			$a = array_merge((array)$v['basic'], (array)$v['warrantExData']);
-			if(! $a['code']){
-				continue;
-			}
-			
-			$gets[$a['code']] = $a;
-		}
-		return (array)$gets;
+		return (array)$ret['staticInfoList'];
 	}
 	/**
 	 * 获取正股相关股票
@@ -826,27 +708,7 @@ class futu{
 		if(! $ret = $this->send('3206', $C2S)){
 			return array();
 		}
-		$gets = array();
-		foreach ((array)$ret['staticInfoList'] as $v){
-			if($v['basic']){
-				$v['basic']['code'] = $v['basic']['security']['code'];
-				$v['basic']['market'] = $v['basic']['security']['market'];
-				unset($v['basic']['security']);
-			}
-			if($v['warrantExData']){
-				$v['warrantExData']['owner_code'] = $v['warrantExData']['owner']['code'];
-				$v['warrantExData']['owner_market'] = $v['warrantExData']['owner']['market'];
-				unset($v['warrantExData']['owner']);
-			}
-			
-			$a = array_merge((array)$v['basic'], (array)$v['warrantExData']);
-			if(! $a['code']){
-				continue;
-			}
-			
-			$gets[$a['code']] = $a;
-		}
-		return (array)$gets;
+		return (array)$ret['staticInfoList'];
 	}
 	/**
 	 * 获取股票所属板块(30秒10次)
@@ -900,14 +762,14 @@ class futu{
 		
 	}
 	/**
-	 * 获取涡轮 https://futunnopen.github.io/futu-api-doc/protocol/quote_protocol.html#qot-getwarrant-proto-3210
+	 * 获取涡轮
 	 * @param array $filter
 	 * @param number $begin 数据起始点
 	 * @param number $num 请求数据个数,最大200
-	 * @param number $sortField 根据哪个字段排序 https://futunnopen.github.io/futu-api-doc/protocol/base_define.html#sortfield
+	 * @param number $sortField 根据哪个字段排序
 	 * @param string $ascend 升序ture,降序false
 	 */
-	public function Qot_GetWarrant($owner, $filter=array(), $begin=0, $num=200, $sortField=10, $ascend=false){
+	public function Qot_GetWarrant($code, $filter=array(), $begin=0, $num=200, $sortField=10, $ascend=false){
 	    if(! $this->limit(__LINE__, 30, 60)){
 	        return array();
 	    }
@@ -923,10 +785,10 @@ class futu{
 	    foreach ((array)$filter as $k => $v){
 	        $C2S[$k] = $v;
 	    }
-	    if($owner = trim($owner)){
+	    if($code = trim($code)){
 	        $C2S['owner'] = array(
 	            'market' => $this->market,
-	            'code' => (string)$owner,
+	            'code' => (string)$code,
 	        );
 	    }
 	    if(! $ret = $this->send('3210', $C2S)){
@@ -950,7 +812,7 @@ class futu{
 	/**
 	 * 获取资金流向,仅支持正股、窝轮和基金
 	 * @param string $code
-	 * @return boolean|array|array
+	 * @return array
 	 */
 	public function Qot_GetCapitalFlow($code){
 	    if(! $this->limit(__LINE__, 30, 30)){
@@ -1011,27 +873,7 @@ class futu{
 	    if(! $ret = $this->send('3213', $C2S)){
 	        return array();
 	    }
-	    $gets = array();
-	    foreach ((array)$ret['staticInfoList'] as $v){
-	        if($v['basic']){
-	            $v['basic']['code'] = $v['basic']['security']['code'];
-	            $v['basic']['market'] = $v['basic']['security']['market'];
-	            unset($v['basic']['security']);
-	        }
-	        if($v['warrantExData']){
-	            $v['warrantExData']['owner_code'] = $v['warrantExData']['owner']['code'];
-	            $v['warrantExData']['owner_market'] = $v['warrantExData']['owner']['market'];
-	            unset($v['warrantExData']['owner']);
-	        }
-	        
-	        $a = array_merge((array)$v['basic'], (array)$v['warrantExData']);
-	        if(! $a['code']){
-	            continue;
-	        }
-	        
-	        $gets[$a['code']] = $a;
-	    }
-	    return (array)$gets;
+	    return (array)$ret['staticInfoList'];
 	}
 	/**
 	 * 修改自选股分组下的股票
@@ -1254,31 +1096,21 @@ class futu{
 	        return array();
 	    }
 	    $C2S = array(
-	        'market' => $this->market,
+	        'market' => $this->trdMarket,
 	        'beginTime' => date('Y-m-d', $beginTime), //开始时间字符串
 	        'endTime' => date('Y-m-d', $endTime) //结束时间字符串
 	    );
 	    if(! $ret = $this->send('3219', $C2S)){
 	        return array();
 	    }
-	    
-	    $gets = array();
-	    foreach ((array)$ret['tradeDateList'] as $v){
-	        if(! $timestamp = (int)$v['timestamp']){
-	            continue;
-	        }
-	        $gets[$timestamp] = array($timestamp, $v['tradeDateType']);
-	    }
-	    ksort($gets, SORT_NUMERIC);
-	    
-	    return array_values($gets);
+	    return (array)$ret['tradeDateList'];
 	}
 	/**
 	 * 设置到价提醒
 	 * @param string $code
-	 * @param int $op 操作类型:1新增 2删除 3启用 4禁用 5修改
+	 * @param int $op 操作类型:1新增 2删除 3启用 4禁用 5修改6删除该支股票下所有到价提醒
 	 * @param int $key 到价提醒的标识,Qot_GetPriceReminder协议可获得,用于指定要操作的到价提醒项,对于新增的情况不需要填
-	 * @param int $type Qot_Common::PriceReminderType,提醒类型,删除/启用/禁用的情况下会忽略该字段 https://futunnopen.github.io/futu-api-doc/protocol/base_define.html#priceremindertype
+	 * @param int $type Qot_Common::PriceReminderType,提醒类型,删除/启用/禁用的情况下会忽略该字段 
 	 * @param int $freq Qot_Common::PriceReminderFreq,提醒频率类型,删除/启用/禁用的情况下会忽略该字段 1持续提醒 2每日一次 3仅提醒一次
 	 * @param float $value 提醒值,删除/启用/禁用的情况下会忽略该字段
 	 * @param string $note 用户设置到价提醒时的标注,最多10个字符,删除/启用/禁用的情况下会忽略该字段
@@ -1322,7 +1154,7 @@ class futu{
 	 * @param string $code
 	 * @return array
 	 */
-	public function Qot_GetPriceReminder($code=''){
+	public function Qot_GetPriceReminder($code=null){
 	    if(! $this->limit(__LINE__, 30, 10)){
 	        return array();
 	    }
@@ -1352,6 +1184,7 @@ class futu{
 	        
 	        $gets[$v['code']] = $v;
 	    }
+	    
 	    return (array)$gets;
 	}
 	/**
@@ -1377,6 +1210,36 @@ class futu{
 	        $gets[] = $v;
 	    }
 	    return (array)$gets;
+	}
+	/**
+	 * 获取指定品种的市场状态
+	 * @return array
+	 */
+	public function Qot_GetMarketState($codes){
+	    if(! $this->limit(__LINE__, 30, 10)){
+	        return array();
+	    }
+	    if(! $this->InitConnect()){
+	        return array();
+	    }
+	    
+	    $securityList = array();
+	    foreach ((array)$codes as $code){
+	        $securityList[] = array(
+	            'market' => $this->market,
+	            'code' => (string)$code,
+	        );
+	    }
+	    if(! $securityList = (array)$securityList){
+	        return array();
+	    }
+	    $C2S = array(
+	        'securityList' => $securityList,
+	    );
+	    if(! $ret = $this->send('3223', $C2S)){
+	        return array();
+	    }
+	    return (array)$ret['marketInfoList'];
 	}
 	/**
 	 * 获取交易账户列表
@@ -1621,6 +1484,11 @@ class futu{
 	    if(! $accID = (string)$this->accList[$this->trdMarket][$this->trdEnv]){
 	        return array();
 	    }
+	    if($refreshCache){
+	        if(! $this->limit(__LINE__, 30, 10)){
+	            return array();
+	        }
+	    }
 	    $C2S = array(
 	        'header' => array(
 	            'trdEnv' => $this->trdEnv,
@@ -1661,9 +1529,11 @@ class futu{
 	 * @param float $adjustSideAndLimit 如果调整价格,是向上调整(正)还是向下调整(负),最多调整多少百分比
 	 * @param int $secMarket 证券所属市场 1港股正股/涡轮;2美股正股/期权;31沪市;32深市
 	 * @param string $remark 用户备注字符串,最多只能传64字节,可用于标识订单唯一信息等,下单填上订单结构就会带上
+	 * @param int $timeInForce 0当日有效1撤单前有效最多持续90自然日
+	 * @param bool $fillOutsideRTH 是否允许盘前盘后成交仅适用于美股限价单
 	 * @return id 订单ID
 	 */
-	public function Trd_PlaceOrder($code, $trdSide, $qty, $price, $orderType=1, $adjustPrice=false, $adjustSideAndLimit=0, $secMarket=1, $remark=''){
+	public function Trd_PlaceOrder($code, $trdSide, $qty, $price, $orderType=1, $adjustPrice=false, $adjustSideAndLimit=0, $secMarket=1, $remark='', $timeInForce=0, $fillOutsideRTH=false){
 	    if(! $this->Trd_UnlockTrade(true)){
 	        return 0;
 	    }
@@ -1702,6 +1572,12 @@ class futu{
 	    }
 	    if($adjustSideAndLimit){
 	        $C2S['adjustSideAndLimit'] = (float)$adjustSideAndLimit;
+	    }
+	    if($timeInForce){
+	        $C2S['timeInForce'] = (int)$timeInForce;
+	    }
+	    if($fillOutsideRTH){
+	        $C2S['fillOutsideRTH'] = (bool)$fillOutsideRTH;
 	    }
 	    if(! $ret = $this->send('2202', $C2S)){
 	        return 0;
@@ -2091,6 +1967,6 @@ class futu{
 		return false;
 	}
 	public function __destruct(){
-		
+		$this->close();
 	}
 }
