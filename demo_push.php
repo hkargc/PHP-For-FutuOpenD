@@ -45,7 +45,7 @@ Swoole\Coroutine::create(function(){
             if(! $GLOBALS['futu']->Trd_GetAccList()){ //获取账户
                 return true;
             }
-            if(! $GLOBALS['futu']->Trd_SubAccPush()){ //订阅订单推送
+            if(! $GLOBALS['futu']->Trd_SubAccPush([1])){ //订阅订单推送
                 return true;
             }
             if(time() - $cli->lasttime >= 10){
@@ -82,11 +82,7 @@ Swoole\Coroutine::create(function(){
         		case 1004: //保持连接
         		break;
         		case 2001: //获取交易账号
-        			foreach ((array)$a['accList'] as $v){
-        				foreach ((array)$v['trdMarketAuthList'] as $vv){ //可拥有多个交易市场权限,目前仅单个
-        					$GLOBALS['futu']->accList[$vv][$v['trdEnv']] = (string)$v['accID'];
-        				}
-        			}
+        			$GLOBALS['futu']->accList = (array) $a['accList'];
         		break;
         		case 2005: //解锁完成
         			$GLOBALS['futu']->unlock = true;
