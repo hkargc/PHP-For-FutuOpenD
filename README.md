@@ -1,10 +1,10 @@
-futu-api v6.2 (富途交易开放平台) PHP 接口<br />
+Futu-OpenAPI v10.1 (富途交易开放平台) PHP 接口<br />
 
-已测试环境: CentOS 9 + PHP 8 + Swoole 4.8.11 + FutuOpenD 6.2.2718<br />
+已测试环境: RockyLinux 10 + PHP 8.5 + Swoole 6.2.0 + FutuOpenD 10.1.6108<br />
 
-http://www.php.net/<br />
-https://www.centos.org/<br />
-http://pecl.php.net/package/swoole<br />
+https://www.php.net/<br />
+https://rockylinux.org/<br />
+https://pecl.php.net/package/swoole<br />
 https://www.futunn.com/OpenAPI<br />
 
 富途网关启动:<br />
