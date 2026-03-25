@@ -2113,12 +2113,12 @@ class futu {
 	}
 
 	/**
-	 * 模拟富途回包
+	 * 模拟富途Protobuf回包
 	 * @param int $proto
 	 * @param array $S2C
 	 * @return bool
 	 */
-	function serialize($proto, $S2C) {
+	public function serialize($proto, $S2C) {
 		if (!$proto = (int) $proto) {
 			return false;
 		}
